@@ -455,7 +455,7 @@ sch.total <- sch.total %>%
 
 ################
 ###Clean data###
-################ PICK UP HERE
+################
 
 #make lists of dataframes for easy editing
 dis.list = list(dis.econ, dis.dis, dis.ell, dis.gender, dis.race, dis.total)
@@ -596,46 +596,114 @@ sch.race.final <- inner_join(sch.race, all.names.sch1, by = c("dis_id", "loc_id"
 colnames(sch.race.final)[colnames(sch.race.final) == "school_name" ] <- "loc_name"
 
 #******
+#fix the dis_id and dis_name of the schools that we manually linked
+#remove current dis_id, replace with first 6 digits of loc_id
+sch.race.final <-sch.race.final %>%
+  select(-dis_id) %>%
+  mutate(dis_id = substr(loc_id,1,6))
 
-#find districts with multiple spellings and assign most recent year's spelling
-
-all.names.dis <- sch.race.final %>%
-  select(year, county, dis_id, dis_id, dis_name, loc_id, loc_name)
-
-#Find schools with more than one spelling
-names.test.dis <- all.names.dis %>%
+#remove charters, group_by dis_id and extract most recent dis_name
+sch.race.no.dis <- sch.race.final %>%
+  mutate(charter_flag = substr(loc_id, 7,8)) %>%
+  filter(charter_flag != "86") %>%
+  select(year, dis_id, dis_name) %>%
   group_by(dis_id) %>%
-  summarise(num_names = n_distinct(dis_name)) %>%
+  filter(year == max(year)) %>%
+  distinct() %>%
+  select(-year) %>%
+  rename(correct_dis_name = dis_name)
+
+test.1 <- sch.race.no.dis %>%
+  group_by(dis_id) %>%
+  summarise(num_id = n_distinct(correct_dis_name)) %>%
+  filter(num_id > 1)
+  
+#check which ones aren't unique (where are there duplicates)
+names.test.dis <- sch.race.no.dis %>%
+  group_by(correct_dis_name) %>% 
+  summarise(num_names = n_distinct(dis_id)) %>%
   filter(num_names > 1)
+  
+#there are cases where a school changed districts and its district_id changed according but their loc_id remained the same
+#these are causing an issue because they cause our dis_id's to map to multiple names
+#as a temporary fix, we will manually remove the incorrect mappings
+#an issue with this is that the schools that switch districts now are being put in one district for all of their years
+sch.race.no.dis <- as.data.frame(sch.race.no.dis)
 
-#Create table of all school names tied to these school codes
-many.names.dis <- inner_join(all.names.dis,names.test.dis, by = "dis_id") %>%
-  select(dis_id, dis_name, year)
+#add unique ID
+sch.race.no.dis.fix <- sch.race.no.dis
+sch.race.no.dis.fix$ID <- seq.int(nrow(sch.race.no.dis.fix))
+#note: to make this slightly better a column could be added that simply concatenates
+#dis_is and dis_name
 
-many.names.dis$year <- as.numeric(many.names.dis$year)
-recent.year.dis <- many.names.dis %>%
+#select IDs of incorrect matches and remove them
+sch.race.no.dis.fix$ID <- as.character(sch.race.no.dis.fix$ID)
+sch.race.no.dis.fix <- sch.race.no.dis.fix %>%
+  filter(ID != 369 & ID != 381 & ID != 385 & ID != 386 & ID != 394 & ID != 399 & ID != 401 & ID != 407 & ID != 409 & ID != 405
+         & ID != 422 & ID != 396, ID != 402) %>%
+  select(-ID)
+
+#check to ensure all duplicates were removed
+test.2 <- sch.race.no.dis.fix %>%
   group_by(dis_id) %>%
-  summarise(year = max(year))
+  summarise(num_id = n_distinct(correct_dis_name)) %>%
+  filter(num_id > 1)
 
-#use most recent year to create list of master names
-dis.names <- inner_join(many.names.dis, recent.year.dis, by = c("year", "dis_id")) %>%
-  select(dis_id, master_name = dis_name)
+#update dis_name in sch.race.final
+sch.race.final <- left_join(sch.race.final, sch.race.no.dis.fix, by = "dis_id" )
 
-#create list of unique master_names linked to dis_id and loc_id
-#note: this line of code may take a minute or two to run
-all.names.dis1 <- left_join(all.names.dis, dis.names, by = "dis_id") %>%
-  mutate(master_dis_name = ifelse(is.na(master_name), dis_name, master_name)) %>%
-  select(loc_id, dis_id, master_dis_name) %>%
-  distinct()
+sch.race.final <- sch.race.final %>%
+  select(-dis_name) %>%
+  rename(dis_name = correct_dis_name)
 
 
-#update sch.race with the master names
-sch.race.final2 <- inner_join(sch.race.final, all.names.dis1, by = c("dis_id", "loc_id")) %>%
-  select(-c("dis_name")) %>%
-  rename(dis_name = master_dis_name)
-
-#reassign to sch.race.final to avoid updating the variables
-sch.race.final <- sch.race.final2
+####The below commented out code was for originally finding duplicate dis_name (probably unnecessary to keep now)####
+#####################################################################################################################
+# #find districts with more than one spelling
+# names.test.dis2 <- sch.race.no.dis %>%
+#   group_by(dis_id) %>%
+#   summarise(num_names = n_distinct(dis_name)) %>%
+#   filter(num_names > 1)
+#   
+# #find districts with multiple spellings and assign most recent year's spelling
+# 
+# all.names.dis <- sch.race.final %>%
+#   select(year, county, dis_id, dis_id, dis_name, loc_id, loc_name)
+# 
+# #Find schools with more than one spelling
+# names.test.dis <- all.names.dis %>%
+#   group_by(dis_id) %>%
+#   summarise(num_names = n_distinct(dis_name)) %>%
+#   filter(num_names > 1)
+# 
+# #Create table of all school names tied to these school codes
+# many.names.dis <- inner_join(all.names.dis,names.test.dis, by = "dis_id") %>%
+#   select(dis_id, dis_name, year)
+# 
+# many.names.dis$year <- as.numeric(many.names.dis$year)
+# recent.year.dis <- many.names.dis %>%
+#   group_by(dis_id) %>%
+#   summarise(year = max(year))
+# 
+# #use most recent year to create list of master names
+# dis.names <- inner_join(many.names.dis, recent.year.dis, by = c("year", "dis_id")) %>%
+#   select(dis_id, master_name = dis_name)
+# 
+# #create list of unique master_names linked to dis_id and loc_id
+# #note: this line of code may take a minute or two to run
+# all.names.dis1 <- left_join(all.names.dis, dis.names, by = "dis_id") %>%
+#   mutate(master_dis_name = ifelse(is.na(master_name), dis_name, master_name)) %>%
+#   select(loc_id, dis_id, master_dis_name) %>%
+#   distinct()
+# 
+# 
+# #update sch.race with the master names
+# sch.race.final2 <- inner_join(sch.race.final, all.names.dis1, by = c("dis_id", "loc_id")) %>%
+#   select(-c("dis_name")) %>%
+#   rename(dis_name = master_dis_name)
+# 
+# #reassign to sch.race.final to avoid updating the variables
+# sch.race.final <- sch.race.final2
 
 
 #standardize sub_group races
@@ -648,27 +716,41 @@ unique.races <- unique(sch.race.final$subgroup_name)
 
 sch.race.final.for.correction <- sch.race.final
  
-sch.race.final <- sch.race.final %>%
-  mutate(dis_loc_name <- paste(dis_name," - ",loc_name)) 
+# sch.race.final <- sch.race.final %>%
+#   mutate(dis_loc_name <- paste(dis_name," - ",loc_name))
+# colnames(sch.race.final)[27] <- "dis_loc_name"
 
-colnames(sch.race.final)[27] <- "dis_loc_name"
+# sch.race.final.names <- sch.race.final %>%
+#   select(loc_id, dis_loc_name) %>%
+#   distinct()
 
-sch.race.final.names <- sch.race.final %>%
-  select(loc_id, loc_name, dis_loc_name) %>%
-  distinct()
+#change column names of grades to increase readability on dashboard
+colnames(sch.race.final)[colnames(sch.race.final) == "pk"] <- "Pre-K"
+colnames(sch.race.final)[colnames(sch.race.final) == "kg"] <- "Kindergarten"
+colnames(sch.race.final)[colnames(sch.race.final) == "grade_1"] <- "Grade 1"
+colnames(sch.race.final)[colnames(sch.race.final) == "grade_2"] <- "Grade 2"
+colnames(sch.race.final)[colnames(sch.race.final) == "grade_3"] <- "Grade 3"
+colnames(sch.race.final)[colnames(sch.race.final) == "grade_4"] <- "Grade 4"
+colnames(sch.race.final)[colnames(sch.race.final) == "grade_5"] <- "Grade 5"
+colnames(sch.race.final)[colnames(sch.race.final) == "grade_6"] <- "Grade 6"
+colnames(sch.race.final)[colnames(sch.race.final) == "grade_7"] <- "Grade 7"
+colnames(sch.race.final)[colnames(sch.race.final) == "grade_8"] <- "Grade 8"
+colnames(sch.race.final)[colnames(sch.race.final) == "grade_9"] <- "Grade 9"
+colnames(sch.race.final)[colnames(sch.race.final) == "grade_10"] <- "Grade 10"
+colnames(sch.race.final)[colnames(sch.race.final) == "grade_11"] <- "Grade 11"
+colnames(sch.race.final)[colnames(sch.race.final) == "grade_12"] <- "Grade 12"
+colnames(sch.race.final)[colnames(sch.race.final) == "ungraded_ele"] <- "Ungraded Elementary"
+colnames(sch.race.final)[colnames(sch.race.final) == "ungraded_sec"] <- "Ungraded Secondary"
 
-
-sch.race.final <- sch.race.final %>%
-  select(-loc_name, -dis_loc_name)
 
 
 #turn it into long format for grade selection
 key_col <- "Grade"
 value_col <- "num_students"
-gather_col <- c("pk", "kg", "grade_1", "grade_2", "grade_3", "grade_4","grade_5", "grade_6",
-                "grade_7", "grade_8","grade_9", "grade_10","grade_11", "grade_12", "ungraded_ele", "ungraded_sec")
+gather_col <- c("Pre-K","Kindergarten", "Grade 1", "Grade 2", "Grade 3", "Grade 4", "Grade 5", "Grade 6", "Grade 7",
+                "Grade 8", "Grade 9", "Grade 10", "Grade 11", "Grade 12", "Ungraded Elementary", "Ungraded Secondary")
 
-sch.race.final.long <- sch.race.final %>%
+sch.race.final.long <- sch.race.final%>%
   gather(key_col, value_col, gather_col)
 
 colnames(sch.race.final.long)[colnames(sch.race.final.long) == "key_col" ] <- "grade"
@@ -686,7 +768,7 @@ continued.analysis.output.loc <- "G:/Team Drives/NYSED/Analysis/Enrollment/outpu
 #write_xlsx(sch.race.final.for.correction, paste0(continued.analysis.output.loc, "sch_race_final_for_correction.xlsx"))
 
 #write.csv(sch.race.final, paste0(tableau.output.loc, "sch_race_final.csv"), row.names = F)
-write.csv(sch.race.final.names, paste0(tableau.output.loc, "sch_race_final_names.csv"), row.names = F)
+#write.csv(sch.race.final.names, paste0(tableau.output.loc, "sch_race_final_names.csv"), row.names = F)
 #write_xlsx(sch.race.final.names, paste0(tableau.output.loc, "sch_race_final_names.xlsx"))
 write.csv(sch.race.final.long, paste0(tableau.output.loc, "sch_race_final_long.csv"), row.names = F)
 
